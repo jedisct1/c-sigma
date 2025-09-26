@@ -108,17 +108,54 @@ bool chaum_pedersen_verify(
 );
 ```
 
+## When to Use Each Protocol
+
+### Schnorr Protocol
+
+What it proves: Knowledge of a secret value (discrete logarithm) without revealing it.
+
+Mathematical property: Proves "I know x such that Y = x*G" where G is the generator and Y is public.
+
+Use cases:
+
+- Digital signatures: Prove you own the private key corresponding to a public key
+- Authentication: Log in to a service without transmitting your password
+- Cryptocurrency wallets: Prove ownership of funds without revealing private keys
+- Access control: Demonstrate you have credentials without exposing them
+- Password-authenticated key exchange (PAKE): Establish secure channels based on passwords
+
+Example scenario: Alice wants to prove she owns a Bitcoin address. She uses Schnorr to prove she knows the private key corresponding to the public address, without revealing the private key itself.
+
+### Chaum-Pedersen Protocol
+
+What it proves: Two discrete logarithms are equal, without revealing the common exponent.
+
+Mathematical property: Proves "log_g1(h1) = log_g2(h2)" or equivalently "h1 = g1^x AND h2 = g2^x" for some secret x.
+
+Use cases:
+
+- Verifiable encryption: Prove a ciphertext encrypts a specific value without decryption
+- Anonymous credentials: Show two credentials belong to the same user without revealing identity
+- Mix networks: Prove correct re-encryption in privacy protocols
+- Cross-chain atomic swaps: Prove same secret is used in multiple transactions
+- Verifiable shuffles: Prove a list was correctly permuted without revealing the permutation
+- Blind signatures: Prove consistency between blinded and unblinded values
+
+Example scenario: A voting system needs to prove that an encrypted vote was correctly re-encrypted (same vote, different randomness) during the mixing phase, without revealing the actual vote.
+
+## Protocol Comparison
+
+| Aspect        | Schnorr                     | Chaum-Pedersen                     |
+| ------------- | --------------------------- | ---------------------------------- |
+| Proof size    | 64 bytes                    | 96 bytes                           |
+| What's proven | Knowledge of one secret     | Equality of two discrete logs      |
+| Complexity    | Simpler                     | More complex                       |
+| Computation   | 2 exponentiations to verify | 4 exponentiations to verify        |
+| Primary use   | Authentication, signatures  | Verifiable encryption, DLEQ proofs |
+
 ## Implementation Details
 
 - Elliptic Curve Group: Ristretto255 (via libsodium)
 - Hash Function: SHAKE128 for Fiat-Shamir challenges
 - Proof Sizes: Fixed - 64 bytes (Schnorr), 96 bytes (Chaum-Pedersen)
 - Security: 128-bit security level
-
-## Applications
-
-- Password-authenticated key exchange
-- Anonymous credentials
-- Verifiable encryption
-- Blockchain protocols
-- Privacy-preserving authentication
