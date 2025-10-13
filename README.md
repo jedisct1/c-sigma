@@ -7,15 +7,14 @@ A complete implementation of [draft-irtf-cfrg-sigma-protocols-00](https://datatr
 ### Protocol Implementations
 
 - Schnorr Protocol: Prove knowledge of discrete logarithm
-- Chaum-Pedersen Protocol: Prove discrete logarithm equality (DLEQ)
+- DLEQ Protocol: Prove discrete logarithm equality (also known as Chaum-Pedersen)
 - Pedersen Commitments: Prove knowledge of commitment opening
-- General Framework: Build arbitrary linear relation proofs
+- General Framework: Build arbitrary linear relation proofs with simplified API
 
 ### Capabilities
 
 - Non-interactive proofs: Fiat-Shamir transformation with SHAKE128
-- Zero-knowledge simulators: For proof composition and security analysis
-- Complete API: Both simple and general framework interfaces
+- Both simple and general framework interfaces
 - Serialization: Full encode/decode support with validation
 - Secure: Built on libsodium's Ristretto255 group operations
 - Spec compliant: Full implementation of IETF draft specification
@@ -23,18 +22,23 @@ A complete implementation of [draft-irtf-cfrg-sigma-protocols-00](https://datatr
 ## Quick Start
 
 ```c
+#include <sodium.h>
 #include "sigma.h"
 
-// Initialize
-sigma_init();
+// Initialize libsodium
+sodium_init();
 
 // Prove knowledge of private key
-uint8_t private_key[32], public_key[32], proof[64];
+uint8_t private_key[CSIGMA_SCALAR_BYTES];
+uint8_t public_key[CSIGMA_POINT_BYTES];
+uint8_t proof[CSIGMA_SCHNORR_PROOF_SIZE];
+
 crypto_core_ristretto255_scalar_random(private_key);
 crypto_scalarmult_ristretto255_base(public_key, private_key);
 
-schnorr_prove(proof, private_key, public_key, message, message_len);
-bool valid = schnorr_verify(proof, public_key, message, message_len);
+uint8_t message[] = "Hello";
+csigma_schnorr_prove(proof, private_key, public_key, message, sizeof(message));
+bool valid = csigma_schnorr_verify(proof, public_key, message, sizeof(message));
 ```
 
 ## Building
@@ -60,13 +64,15 @@ make check
 
 ## API Reference
 
-### Initialization
+### Constants
 
 ```c
-int sigma_init(void);
+#define CSIGMA_SCALAR_BYTES        32  // Scalar size
+#define CSIGMA_POINT_BYTES         32  // Group element size
+#define CSIGMA_SCHNORR_PROOF_SIZE  64  // Schnorr proof size
+#define CSIGMA_DLEQ_PROOF_SIZE     96  // DLEQ proof size
+#define CSIGMA_PEDERSEN_PROOF_SIZE 96  // Pedersen proof size
 ```
-
-Initialize the library (wraps sodium_init).
 
 ### Schnorr Protocol
 
@@ -74,43 +80,82 @@ Proves knowledge of x where Y = x*G (G is the generator).
 
 ```c
 // Create proof
-int schnorr_prove(
-    uint8_t proof[64],                  // Output: 64-byte proof
-    const uint8_t witness[32],          // Secret x
-    const uint8_t public_key[32],       // Public Y = x*G
-    const uint8_t *message,              // Message to bind
+int csigma_schnorr_prove(
+    uint8_t proof[CSIGMA_SCHNORR_PROOF_SIZE],   // Output: 64-byte proof
+    const uint8_t witness[CSIGMA_SCALAR_BYTES], // Secret x
+    const uint8_t public_key[CSIGMA_POINT_BYTES], // Public Y = x*G
+    const uint8_t *message,                      // Message to bind
     size_t message_len
 );
+// Returns: 0 on success, -1 on error
 
 // Verify proof
-bool schnorr_verify(
-    const uint8_t proof[64],
-    const uint8_t public_key[32],
+bool csigma_schnorr_verify(
+    const uint8_t proof[CSIGMA_SCHNORR_PROOF_SIZE],
+    const uint8_t public_key[CSIGMA_POINT_BYTES],
     const uint8_t *message,
     size_t message_len
 );
+// Returns: true if valid, false otherwise
 ```
 
-### Chaum-Pedersen Protocol
+### DLEQ Protocol
 
 Proves that log_g1(h1) = log_g2(h2) without revealing the exponent.
 
 ```c
 // Create proof
-int chaum_pedersen_prove(
-    uint8_t proof[96],                  // Output: 96-byte proof
-    const uint8_t witness[32],          // Secret x where h1=g1^x, h2=g2^x
-    const uint8_t g1[32], const uint8_t h1[32],
-    const uint8_t g2[32], const uint8_t h2[32],
+int csigma_dleq_prove(
+    uint8_t proof[CSIGMA_DLEQ_PROOF_SIZE],      // Output: 96-byte proof
+    const uint8_t witness[CSIGMA_SCALAR_BYTES], // Secret x where h1=g1^x, h2=g2^x
+    const uint8_t g1[CSIGMA_POINT_BYTES], const uint8_t h1[CSIGMA_POINT_BYTES],
+    const uint8_t g2[CSIGMA_POINT_BYTES], const uint8_t h2[CSIGMA_POINT_BYTES],
+    const uint8_t *message,
+    size_t message_len
+);
+// Returns: 0 on success, -1 on error
+
+// Verify proof
+bool csigma_dleq_verify(
+    const uint8_t proof[CSIGMA_DLEQ_PROOF_SIZE],
+    const uint8_t g1[CSIGMA_POINT_BYTES], const uint8_t h1[CSIGMA_POINT_BYTES],
+    const uint8_t g2[CSIGMA_POINT_BYTES], const uint8_t h2[CSIGMA_POINT_BYTES],
+    const uint8_t *message,
+    size_t message_len
+);
+// Returns: true if valid, false otherwise
+```
+
+### Pedersen Commitments
+
+```c
+// Create commitment C = x*G + r*H
+int csigma_pedersen_commit(
+    uint8_t commitment[CSIGMA_POINT_BYTES],
+    const uint8_t value[CSIGMA_SCALAR_BYTES],
+    const uint8_t randomness[CSIGMA_SCALAR_BYTES],
+    const uint8_t G[CSIGMA_POINT_BYTES],
+    const uint8_t H[CSIGMA_POINT_BYTES]
+);
+
+// Prove knowledge of opening
+int csigma_pedersen_prove(
+    uint8_t proof[CSIGMA_PEDERSEN_PROOF_SIZE],
+    const uint8_t value[CSIGMA_SCALAR_BYTES],
+    const uint8_t randomness[CSIGMA_SCALAR_BYTES],
+    const uint8_t G[CSIGMA_POINT_BYTES],
+    const uint8_t H[CSIGMA_POINT_BYTES],
+    const uint8_t C[CSIGMA_POINT_BYTES],
     const uint8_t *message,
     size_t message_len
 );
 
 // Verify proof
-bool chaum_pedersen_verify(
-    const uint8_t proof[96],
-    const uint8_t g1[32], const uint8_t h1[32],
-    const uint8_t g2[32], const uint8_t h2[32],
+bool csigma_pedersen_verify(
+    const uint8_t proof[CSIGMA_PEDERSEN_PROOF_SIZE],
+    const uint8_t G[CSIGMA_POINT_BYTES],
+    const uint8_t H[CSIGMA_POINT_BYTES],
+    const uint8_t C[CSIGMA_POINT_BYTES],
     const uint8_t *message,
     size_t message_len
 );
@@ -134,7 +179,7 @@ Use cases:
 
 Example scenario: Alice wants to prove she owns a Bitcoin address. She uses Schnorr to prove she knows the private key corresponding to the public address, without revealing the private key itself.
 
-### Chaum-Pedersen Protocol
+### DLEQ Protocol (Chaum-Pedersen)
 
 What it proves: Two discrete logarithms are equal, without revealing the common exponent.
 
@@ -153,42 +198,109 @@ Example scenario: A voting system needs to prove that an encrypted vote was corr
 
 ## Protocol Comparison
 
-| Aspect        | Schnorr                     | Chaum-Pedersen                     |
-| ------------- | --------------------------- | ---------------------------------- |
-| Proof size    | 64 bytes                    | 96 bytes                           |
-| What's proven | Knowledge of one secret     | Equality of two discrete logs      |
-| Complexity    | Simpler                     | More complex                       |
-| Computation   | 2 exponentiations to verify | 4 exponentiations to verify        |
-| Primary use   | Authentication, signatures  | Verifiable encryption, DLEQ proofs |
+| Aspect        | Schnorr                     | DLEQ (Chaum-Pedersen)         |
+| ------------- | --------------------------- | ----------------------------- |
+| Proof size    | 64 bytes                    | 96 bytes                      |
+| What's proven | Knowledge of one secret     | Equality of two discrete logs |
+| Complexity    | Simpler                     | More complex                  |
+| Computation   | 2 exponentiations to verify | 4 exponentiations to verify   |
+| Primary use   | Authentication, signatures  | Verifiable encryption, DLEQ   |
 
 ## API Levels
 
 ### Simple API
 
-Convenient functions for common protocols:
+Convenient functions for common protocols (recommended for most users):
 
-- `schnorr_prove()` / `schnorr_verify()`
-- `chaum_pedersen_prove()` / `chaum_pedersen_verify()`
-- `pedersen_prove()` / `pedersen_verify()`
+- `csigma_schnorr_prove()` / `csigma_schnorr_verify()`
+- `csigma_dleq_prove()` / `csigma_dleq_verify()`
+- `csigma_pedersen_prove()` / `csigma_pedersen_verify()`
 
-### Framework API
+### Framework API - Simplified Builder (Recommended)
 
-Build arbitrary linear relation proofs:
+Build arbitrary linear relation proofs with easy-to-use helpers:
 
-- `linear_relation_*()` - Constraint system builder
-- `prover_commit()` / `prover_response()` - Stateful prover
-- `verifier()` - General verification
-- `simulate_*()` - Zero-knowledge simulators
-- `serialize_*()` / `deserialize_*()` - Proof serialization
+```c
+// Add elements and scalars in one step
+int G = csigma_relation_add_element(&relation, generator);
+int X = csigma_relation_add_element(&relation, public_key);
+int x = csigma_relation_add_scalar(&relation);
 
-See `tests/test_framework.c` for examples of direct framework usage.
+// Add equation with single term (covers 80% of use cases)
+csigma_relation_add_equation_simple(&relation, X, x, G);
+
+// Prove and verify
+csigma_prover_commit(&relation, witness, commitment, &state);
+csigma_prover_response(&state, challenge, response);
+bool valid = csigma_verify(&relation, commitment, challenge, response);
+```
+
+### Framework API - General (For Complex Multi-term Equations)
+
+For equations like C = x*G + r*H:
+
+```c
+// Allocate multiple scalars/elements at once
+int x = csigma_relation_allocate_scalars(&relation, 1);
+int r = csigma_relation_allocate_scalars(&relation, 1);
+
+// Add elements
+int G = csigma_relation_add_element(&relation, G_value);
+int H = csigma_relation_add_element(&relation, H_value);
+
+// Multi-term equation
+int scalar_indices[] = {x, r};
+int element_indices[] = {G, H};
+csigma_relation_add_equation(&relation, C, scalar_indices, element_indices, 2);
+```
+
+### Serialization API
+
+```c
+// Serialize proof
+int csigma_serialize_proof(
+    uint8_t *output,
+    const uint8_t *commitment,
+    size_t num_commitment_elements,
+    const uint8_t *response,
+    size_t num_response_scalars
+);
+
+// Deserialize proof (with validation)
+int csigma_deserialize_proof(
+    uint8_t *commitment,
+    size_t num_commitment_elements,
+    uint8_t *response,
+    size_t num_response_scalars,
+    const uint8_t *data,
+    size_t data_len
+);
+
+// Calculate expected proof size
+size_t csigma_proof_size(size_t num_commitment_elements, size_t num_response_scalars);
+```
+
+See `tests/test_framework.c` for complete examples of framework usage with the simplified API.
 
 ## Implementation Details
 
-- Elliptic Curve Group: Ristretto255
+- Elliptic Curve Group: Ristretto255 (via libsodium)
 - Hash Function: SHAKE128 for Fiat-Shamir challenges
 - Proof Sizes:
   - Schnorr: 64 bytes (1 commitment + 1 response)
   - DLEQ: 96 bytes (2 commitments + 1 response)
   - Pedersen: 96 bytes (1 commitment + 2 responses)
 - Security: 128-bit security level
+- Namespace: All public functions prefixed with `csigma_`
+- Error Handling:
+  - Prove/create functions return 0 on success, -1 on error
+  - Verify functions return true if valid, false otherwise
+
+## Examples
+
+See the following files for complete working examples:
+
+- `example.c` - Simple API demonstrations
+- `tests/test_framework.c` - Simplified framework API usage
+- `tests/test_sigma.c` - Schnorr and DLEQ tests
+- `tests/test_pedersen.c` - Pedersen commitment tests

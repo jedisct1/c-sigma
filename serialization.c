@@ -1,19 +1,6 @@
 #include "serialization.h"
 #include <string.h>
 
-// Internal helper: serialize commitment
-__attribute__((unused)) static int
-serialize_commitment(uint8_t* output, const uint8_t* commitment, size_t num_elements)
-{
-    if (!output || !commitment) {
-        return -1;
-    }
-
-    // Ristretto255 points are already in canonical 32-byte representation
-    memcpy(output, commitment, num_elements * CSIGMA_POINT_BYTES);
-    return 0;
-}
-
 // Internal helper: deserialize commitment with validation
 static int
 deserialize_commitment(uint8_t* commitment, const uint8_t* data, size_t data_len,
@@ -44,19 +31,6 @@ deserialize_commitment(uint8_t* commitment, const uint8_t* data, size_t data_len
 
     // All points valid, copy to output
     memcpy(commitment, data, expected_len);
-    return 0;
-}
-
-// Internal helper: serialize response
-__attribute__((unused)) static int
-serialize_response(uint8_t* output, const uint8_t* response, size_t num_scalars)
-{
-    if (!output || !response) {
-        return -1;
-    }
-
-    // Scalars are already in canonical 32-byte representation
-    memcpy(output, response, num_scalars * CSIGMA_SCALAR_BYTES);
     return 0;
 }
 
