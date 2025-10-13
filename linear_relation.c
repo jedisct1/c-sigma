@@ -176,6 +176,7 @@ void
 linear_relation_append_equation(linear_relation_t* relation, int lhs, const int* rhs_scalar_indices,
                                 const int* rhs_element_indices, size_t num_terms)
 {
+    (void) lhs; // Reserved for future use
     linear_map_t* map = &relation->map;
 
     // Resize combinations array if needed
