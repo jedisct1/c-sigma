@@ -9,7 +9,7 @@
 #define INITIAL_ELEMENTS_CAPACITY    8
 
 // ============================================================================
-// Linear Combination Operations
+// Linear Combination Operations (Internal)
 // ============================================================================
 
 void
@@ -46,14 +46,14 @@ linear_combination_destroy(linear_combination_t* lc)
 }
 
 // ============================================================================
-// Linear Map Operations
+// Linear Map Operations (Internal)
 // ============================================================================
 
 void
 linear_map_init(linear_map_t* map)
 {
     map->combinations         = malloc(INITIAL_CONSTRAINTS_CAPACITY * sizeof(linear_combination_t));
-    map->group_elements       = malloc(INITIAL_ELEMENTS_CAPACITY * POINT_BYTES);
+    map->group_elements       = malloc(INITIAL_ELEMENTS_CAPACITY * CSIGMA_POINT_BYTES);
     map->num_constraints      = 0;
     map->num_scalars          = 0;
     map->num_elements         = 0;
@@ -74,7 +74,6 @@ linear_map_destroy(linear_map_t* map)
 }
 
 // Evaluate linear map: output[i] = sum_j(scalars[j] * elements[k])
-// where the sum is over terms in combinations[i]
 int
 linear_map_eval(const linear_map_t* map, const uint8_t* scalars, uint8_t* output)
 {
@@ -82,33 +81,32 @@ linear_map_eval(const linear_map_t* map, const uint8_t* scalars, uint8_t* output
         const linear_combination_t* lc = &map->combinations[i];
 
         // Start with identity element
-        // For Ristretto255, we compute the first term, then accumulate the rest
-        uint8_t result[POINT_BYTES];
+        uint8_t result[CSIGMA_POINT_BYTES];
         bool    first_term = true;
 
         // Accumulate: result = sum of scalars[j] * elements[k]
         for (size_t j = 0; j < lc->num_terms; j++) {
             int      scalar_idx  = lc->scalar_indices[j];
             int      element_idx = lc->element_indices[j];
-            uint8_t* element     = &map->group_elements[element_idx * POINT_BYTES];
+            uint8_t* element     = &map->group_elements[element_idx * CSIGMA_POINT_BYTES];
 
             // Compute term = scalar * element
-            uint8_t term[POINT_BYTES];
-            if (crypto_scalarmult_ristretto255(term, &scalars[scalar_idx * SCALAR_BYTES],
+            uint8_t term[CSIGMA_POINT_BYTES];
+            if (crypto_scalarmult_ristretto255(term, &scalars[scalar_idx * CSIGMA_SCALAR_BYTES],
                                                element) != 0) {
                 return -1; // Invalid point
             }
 
             if (first_term) {
-                memcpy(result, term, POINT_BYTES);
+                memcpy(result, term, CSIGMA_POINT_BYTES);
                 first_term = false;
             } else {
                 // result += term
-                uint8_t new_result[POINT_BYTES];
+                uint8_t new_result[CSIGMA_POINT_BYTES];
                 if (crypto_core_ristretto255_add(new_result, result, term) != 0) {
                     return -1; // Addition failed
                 }
-                memcpy(result, new_result, POINT_BYTES);
+                memcpy(result, new_result, CSIGMA_POINT_BYTES);
             }
         }
 
@@ -117,7 +115,7 @@ linear_map_eval(const linear_map_t* map, const uint8_t* scalars, uint8_t* output
             return -1;
         }
 
-        memcpy(&output[i * POINT_BYTES], result, POINT_BYTES);
+        memcpy(&output[i * CSIGMA_POINT_BYTES], result, CSIGMA_POINT_BYTES);
     }
     return 0;
 }
@@ -127,14 +125,14 @@ linear_map_eval(const linear_map_t* map, const uint8_t* scalars, uint8_t* output
 // ============================================================================
 
 void
-linear_relation_init(linear_relation_t* relation)
+csigma_relation_init(linear_relation_t* relation)
 {
     linear_map_init(&relation->map);
     relation->image = NULL;
 }
 
 void
-linear_relation_destroy(linear_relation_t* relation)
+csigma_relation_destroy(linear_relation_t* relation)
 {
     linear_map_destroy(&relation->map);
     free(relation->image);
@@ -142,7 +140,7 @@ linear_relation_destroy(linear_relation_t* relation)
 }
 
 int
-linear_relation_allocate_scalars(linear_relation_t* relation, size_t n)
+csigma_relation_allocate_scalars(linear_relation_t* relation, size_t n)
 {
     int base_index = (int) relation->map.num_scalars;
     relation->map.num_scalars += n;
@@ -150,7 +148,7 @@ linear_relation_allocate_scalars(linear_relation_t* relation, size_t n)
 }
 
 int
-linear_relation_allocate_elements(linear_relation_t* relation, size_t n)
+csigma_relation_allocate_elements(linear_relation_t* relation, size_t n)
 {
     linear_map_t* map        = &relation->map;
     int           base_index = (int) map->num_elements;
@@ -158,7 +156,8 @@ linear_relation_allocate_elements(linear_relation_t* relation, size_t n)
     // Resize group_elements array if needed
     while (map->num_elements + n > map->elements_capacity) {
         map->elements_capacity *= 2;
-        map->group_elements = realloc(map->group_elements, map->elements_capacity * POINT_BYTES);
+        map->group_elements =
+            realloc(map->group_elements, map->elements_capacity * CSIGMA_POINT_BYTES);
     }
 
     map->num_elements += n;
@@ -166,15 +165,31 @@ linear_relation_allocate_elements(linear_relation_t* relation, size_t n)
 }
 
 void
-linear_relation_set_element(linear_relation_t* relation, int index,
-                            const uint8_t element[POINT_BYTES])
+csigma_relation_set_element(linear_relation_t* relation, int index,
+                            const uint8_t element[CSIGMA_POINT_BYTES])
 {
-    memcpy(&relation->map.group_elements[index * POINT_BYTES], element, POINT_BYTES);
+    memcpy(&relation->map.group_elements[index * CSIGMA_POINT_BYTES], element, CSIGMA_POINT_BYTES);
+}
+
+// SIMPLIFIED API: Add element and get index
+int
+csigma_relation_add_element(linear_relation_t* relation, const uint8_t element[CSIGMA_POINT_BYTES])
+{
+    int idx = csigma_relation_allocate_elements(relation, 1);
+    csigma_relation_set_element(relation, idx, element);
+    return idx;
+}
+
+// SIMPLIFIED API: Add scalar variable
+int
+csigma_relation_add_scalar(linear_relation_t* relation)
+{
+    return csigma_relation_allocate_scalars(relation, 1);
 }
 
 void
-linear_relation_append_equation(linear_relation_t* relation, int lhs, const int* rhs_scalar_indices,
-                                const int* rhs_element_indices, size_t num_terms)
+csigma_relation_add_equation(linear_relation_t* relation, int lhs, const int* rhs_scalar_indices,
+                             const int* rhs_element_indices, size_t num_terms)
 {
     (void) lhs; // Reserved for future use
     linear_map_t* map = &relation->map;
@@ -198,7 +213,17 @@ linear_relation_append_equation(linear_relation_t* relation, int lhs, const int*
     map->num_constraints++;
 
     // Resize image array if needed
-    relation->image = realloc(relation->image, map->num_constraints * POINT_BYTES);
+    relation->image = realloc(relation->image, map->num_constraints * CSIGMA_POINT_BYTES);
+}
+
+// SIMPLIFIED API: Add equation with single term
+void
+csigma_relation_add_equation_simple(linear_relation_t* relation, int lhs_idx, int scalar_idx,
+                                    int element_idx)
+{
+    int scalar_indices[]  = { scalar_idx };
+    int element_indices[] = { element_idx };
+    csigma_relation_add_equation(relation, lhs_idx, scalar_indices, element_indices, 1);
 }
 
 // ============================================================================
@@ -206,18 +231,18 @@ linear_relation_append_equation(linear_relation_t* relation, int lhs, const int*
 // ============================================================================
 
 void
-prover_state_init(prover_state_t* state, size_t num_scalars)
+csigma_prover_state_init(prover_state_t* state, size_t num_scalars)
 {
     state->num_scalars = num_scalars;
-    state->witness     = malloc(num_scalars * SCALAR_BYTES);
-    state->nonces      = malloc(num_scalars * SCALAR_BYTES);
+    state->witness     = malloc(num_scalars * CSIGMA_SCALAR_BYTES);
+    state->nonces      = malloc(num_scalars * CSIGMA_SCALAR_BYTES);
 }
 
 void
-prover_state_destroy(prover_state_t* state)
+csigma_prover_state_destroy(prover_state_t* state)
 {
-    sodium_memzero(state->witness, state->num_scalars * SCALAR_BYTES);
-    sodium_memzero(state->nonces, state->num_scalars * SCALAR_BYTES);
+    sodium_memzero(state->witness, state->num_scalars * CSIGMA_SCALAR_BYTES);
+    sodium_memzero(state->nonces, state->num_scalars * CSIGMA_SCALAR_BYTES);
     free(state->witness);
     free(state->nonces);
     state->witness     = NULL;
@@ -227,25 +252,25 @@ prover_state_destroy(prover_state_t* state)
 
 // Prover commit phase (spec section 2.2.2.1)
 int
-prover_commit(const linear_relation_t* relation, const uint8_t* witness, uint8_t* commitment,
-              prover_state_t* state)
+csigma_prover_commit(const linear_relation_t* relation, const uint8_t* witness, uint8_t* commitment,
+                     prover_state_t* state)
 {
     size_t num_scalars = relation->map.num_scalars;
 
     // Initialize prover state
-    prover_state_init(state, num_scalars);
+    csigma_prover_state_init(state, num_scalars);
 
     // Copy witness
-    memcpy(state->witness, witness, num_scalars * SCALAR_BYTES);
+    memcpy(state->witness, witness, num_scalars * CSIGMA_SCALAR_BYTES);
 
     // Generate random nonces
     for (size_t i = 0; i < num_scalars; i++) {
-        crypto_core_ristretto255_scalar_random(&state->nonces[i * SCALAR_BYTES]);
+        crypto_core_ristretto255_scalar_random(&state->nonces[i * CSIGMA_SCALAR_BYTES]);
     }
 
     // Compute commitment = linear_map(nonces)
     if (linear_map_eval(&relation->map, state->nonces, commitment) != 0) {
-        prover_state_destroy(state);
+        csigma_prover_state_destroy(state);
         return -1;
     }
 
@@ -254,16 +279,16 @@ prover_commit(const linear_relation_t* relation, const uint8_t* witness, uint8_t
 
 // Prover response phase (spec section 2.2.2.2)
 void
-prover_response(const prover_state_t* state, const uint8_t challenge[SCALAR_BYTES],
-                uint8_t* response)
+csigma_prover_response(const prover_state_t* state, const uint8_t challenge[CSIGMA_SCALAR_BYTES],
+                       uint8_t* response)
 {
     // response[i] = nonces[i] + witness[i] * challenge
     for (size_t i = 0; i < state->num_scalars; i++) {
-        const uint8_t* nonce   = &state->nonces[i * SCALAR_BYTES];
-        const uint8_t* witness = &state->witness[i * SCALAR_BYTES];
-        uint8_t*       resp    = &response[i * SCALAR_BYTES];
+        const uint8_t* nonce   = &state->nonces[i * CSIGMA_SCALAR_BYTES];
+        const uint8_t* witness = &state->witness[i * CSIGMA_SCALAR_BYTES];
+        uint8_t*       resp    = &response[i * CSIGMA_SCALAR_BYTES];
 
-        uint8_t c_times_witness[SCALAR_BYTES];
+        uint8_t c_times_witness[CSIGMA_SCALAR_BYTES];
         crypto_core_ristretto255_scalar_mul(c_times_witness, challenge, witness);
         crypto_core_ristretto255_scalar_add(resp, nonce, c_times_witness);
     }
@@ -271,14 +296,14 @@ prover_response(const prover_state_t* state, const uint8_t challenge[SCALAR_BYTE
 
 // Verifier algorithm (spec section 2.2.3)
 bool
-verifier(const linear_relation_t* relation, const uint8_t* commitment,
-         const uint8_t challenge[SCALAR_BYTES], const uint8_t* response)
+csigma_verify(const linear_relation_t* relation, const uint8_t* commitment,
+              const uint8_t challenge[CSIGMA_SCALAR_BYTES], const uint8_t* response)
 {
     // Check: linear_map(response) == commitment + image * challenge
     size_t num_constraints = relation->map.num_constraints;
 
     // Compute expected = linear_map(response)
-    uint8_t* expected = malloc(num_constraints * POINT_BYTES);
+    uint8_t* expected = malloc(num_constraints * CSIGMA_POINT_BYTES);
     if (linear_map_eval(&relation->map, response, expected) != 0) {
         free(expected);
         return false;
@@ -286,26 +311,26 @@ verifier(const linear_relation_t* relation, const uint8_t* commitment,
 
     // Compute got[i] = commitment[i] + image[i] * challenge
     for (size_t i = 0; i < num_constraints; i++) {
-        const uint8_t* image_i      = &relation->image[i * POINT_BYTES];
-        const uint8_t* commitment_i = &commitment[i * POINT_BYTES];
-        uint8_t*       expected_i   = &expected[i * POINT_BYTES];
+        const uint8_t* image_i      = &relation->image[i * CSIGMA_POINT_BYTES];
+        const uint8_t* commitment_i = &commitment[i * CSIGMA_POINT_BYTES];
+        uint8_t*       expected_i   = &expected[i * CSIGMA_POINT_BYTES];
 
         // c_times_image = challenge * image[i]
-        uint8_t c_times_image[POINT_BYTES];
+        uint8_t c_times_image[CSIGMA_POINT_BYTES];
         if (crypto_scalarmult_ristretto255(c_times_image, challenge, image_i) != 0) {
             free(expected);
             return false;
         }
 
         // got = commitment[i] + c_times_image
-        uint8_t got[POINT_BYTES];
+        uint8_t got[CSIGMA_POINT_BYTES];
         if (crypto_core_ristretto255_add(got, commitment_i, c_times_image) != 0) {
             free(expected);
             return false;
         }
 
         // Check expected[i] == got
-        if (sodium_memcmp(expected_i, got, POINT_BYTES) != 0) {
+        if (sodium_memcmp(expected_i, got, CSIGMA_POINT_BYTES) != 0) {
             free(expected);
             return false;
         }
@@ -313,57 +338,4 @@ verifier(const linear_relation_t* relation, const uint8_t* commitment,
 
     free(expected);
     return true;
-}
-
-// ============================================================================
-// Zero-Knowledge Simulator (Optional)
-// ============================================================================
-
-// Simulate random response (spec section 1.1)
-void
-simulate_response(size_t num_scalars, uint8_t* response)
-{
-    for (size_t i = 0; i < num_scalars; i++) {
-        crypto_core_ristretto255_scalar_random(&response[i * SCALAR_BYTES]);
-    }
-}
-
-// Simulate commitment given response and challenge (spec section 1.1)
-// commitment = linear_map(response) - image * challenge
-int
-simulate_commitment(const linear_relation_t* relation, const uint8_t* response,
-                    const uint8_t challenge[SCALAR_BYTES], uint8_t* commitment)
-{
-    size_t num_constraints = relation->map.num_constraints;
-
-    // Compute linear_map(response)
-    uint8_t* map_response = malloc(num_constraints * POINT_BYTES);
-    if (linear_map_eval(&relation->map, response, map_response) != 0) {
-        free(map_response);
-        return -1;
-    }
-
-    // commitment[i] = map_response[i] - image[i] * challenge
-    for (size_t i = 0; i < num_constraints; i++) {
-        const uint8_t* image_i        = &relation->image[i * POINT_BYTES];
-        const uint8_t* map_response_i = &map_response[i * POINT_BYTES];
-        uint8_t*       commitment_i   = &commitment[i * POINT_BYTES];
-
-        // c_times_image = challenge * image[i]
-        uint8_t c_times_image[POINT_BYTES];
-        if (crypto_scalarmult_ristretto255(c_times_image, challenge, image_i) != 0) {
-            free(map_response);
-            return -1;
-        }
-
-        // commitment[i] = map_response[i] - c_times_image
-        // Use subtraction: a - b = a + (-b)
-        if (crypto_core_ristretto255_sub(commitment_i, map_response_i, c_times_image) != 0) {
-            free(map_response);
-            return -1;
-        }
-    }
-
-    free(map_response);
-    return 0;
 }

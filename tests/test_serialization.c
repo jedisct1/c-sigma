@@ -12,128 +12,132 @@ main()
         return 1;
     }
 
-    // Test 1: Commitment serialization/deserialization
-    printf("Test 1: Commitment round-trip... ");
-    uint8_t original_commitment[2 * POINT_BYTES];
-    uint8_t temp_scalar[SCALAR_BYTES];
+    // Test 1: Complete proof serialization/deserialization
+    printf("Test 1: Complete proof round-trip... ");
 
-    // Generate two random points
+    // Generate test data: 2 commitment points + 3 response scalars
+    uint8_t original_commitment[2 * CSIGMA_POINT_BYTES];
+    uint8_t original_response[3 * CSIGMA_SCALAR_BYTES];
+    uint8_t temp_scalar[CSIGMA_SCALAR_BYTES];
+
+    // Generate random commitment points
     for (int i = 0; i < 2; i++) {
         crypto_core_ristretto255_scalar_random(temp_scalar);
-        crypto_scalarmult_ristretto255_base(&original_commitment[i * POINT_BYTES], temp_scalar);
+        crypto_scalarmult_ristretto255_base(&original_commitment[i * CSIGMA_POINT_BYTES],
+                                            temp_scalar);
     }
 
-    uint8_t serialized[2 * POINT_BYTES];
-    if (serialize_commitment(serialized, original_commitment, 2) != SERIALIZE_OK) {
-        printf("❌ Serialization failed\n");
-        return 1;
-    }
-
-    uint8_t deserialized[2 * POINT_BYTES];
-    if (deserialize_commitment(deserialized, serialized, 2 * POINT_BYTES, 2) != SERIALIZE_OK) {
-        printf("❌ Deserialization failed\n");
-        return 1;
-    }
-
-    if (sodium_memcmp(original_commitment, deserialized, 2 * POINT_BYTES) != 0) {
-        printf("❌ Data mismatch\n");
-        return 1;
-    }
-    printf("✓\n");
-
-    // Test 2: Response serialization/deserialization
-    printf("Test 2: Response round-trip... ");
-    uint8_t original_response[3 * SCALAR_BYTES];
+    // Generate random response scalars
     for (int i = 0; i < 3; i++) {
-        crypto_core_ristretto255_scalar_random(&original_response[i * SCALAR_BYTES]);
+        crypto_core_ristretto255_scalar_random(&original_response[i * CSIGMA_SCALAR_BYTES]);
     }
 
-    uint8_t serialized_resp[3 * SCALAR_BYTES];
-    if (serialize_response(serialized_resp, original_response, 3) != SERIALIZE_OK) {
-        printf("❌ Serialization failed\n");
+    // Serialize proof
+    size_t  proof_len = csigma_proof_size(2, 3);
+    uint8_t proof_buffer[proof_len];
+
+    if (csigma_serialize_proof(proof_buffer, original_commitment, 2, original_response, 3) != 0) {
+        printf("Serialization failed\n");
         return 1;
     }
 
-    uint8_t deserialized_resp[3 * SCALAR_BYTES];
-    if (deserialize_response(deserialized_resp, serialized_resp, 3 * SCALAR_BYTES, 3) !=
-        SERIALIZE_OK) {
-        printf("❌ Deserialization failed\n");
+    // Deserialize proof
+    uint8_t unpacked_commitment[2 * CSIGMA_POINT_BYTES];
+    uint8_t unpacked_response[3 * CSIGMA_SCALAR_BYTES];
+
+    if (csigma_deserialize_proof(unpacked_commitment, 2, unpacked_response, 3, proof_buffer,
+                                 proof_len) != 0) {
+        printf("Deserialization failed\n");
         return 1;
     }
 
-    if (sodium_memcmp(original_response, deserialized_resp, 3 * SCALAR_BYTES) != 0) {
-        printf("❌ Data mismatch\n");
-        return 1;
-    }
-    printf("✓\n");
-
-    // Test 3: Complete proof serialization
-    printf("Test 3: Complete proof round-trip... ");
-    uint8_t proof_buffer[POINT_BYTES + 2 * SCALAR_BYTES];
-
-    int bytes_written = serialize_proof(proof_buffer, original_commitment, 1, original_response, 2);
-    if (bytes_written != (int) (POINT_BYTES + 2 * SCALAR_BYTES)) {
-        printf("❌ Wrong proof size: %d\n", bytes_written);
+    // Verify data matches
+    if (sodium_memcmp(original_commitment, unpacked_commitment, 2 * CSIGMA_POINT_BYTES) != 0) {
+        printf("Commitment mismatch\n");
         return 1;
     }
 
-    uint8_t unpacked_commitment[POINT_BYTES];
-    uint8_t unpacked_response[2 * SCALAR_BYTES];
-    if (deserialize_proof(unpacked_commitment, 1, unpacked_response, 2, proof_buffer,
-                          bytes_written) != SERIALIZE_OK) {
-        printf("❌ Deserialization failed\n");
+    if (sodium_memcmp(original_response, unpacked_response, 3 * CSIGMA_SCALAR_BYTES) != 0) {
+        printf("Response mismatch\n");
         return 1;
     }
+    printf("PASS\n");
 
-    if (sodium_memcmp(unpacked_commitment, original_commitment, POINT_BYTES) != 0) {
-        printf("❌ Commitment mismatch\n");
-        return 1;
-    }
-
-    if (sodium_memcmp(unpacked_response, original_response, 2 * SCALAR_BYTES) != 0) {
-        printf("❌ Response mismatch\n");
-        return 1;
-    }
-    printf("✓\n");
-
-    // Test 4: Error handling - wrong length
-    printf("Test 4: Error handling (wrong length)... ");
-    uint8_t bad_buffer[10];
-    if (deserialize_commitment(deserialized, bad_buffer, 10, 2) != SERIALIZE_ERROR_BAD_LENGTH) {
-        printf("❌ Should have rejected wrong length\n");
-        return 1;
-    }
-    printf("✓\n");
-
-    // Test 5: Error handling - NULL input
-    printf("Test 5: Error handling (NULL input)... ");
-    if (serialize_commitment(NULL, original_commitment, 1) != SERIALIZE_ERROR_NULL_INPUT) {
-        printf("❌ Should have rejected NULL output\n");
-        return 1;
-    }
-    printf("✓\n");
-
-    // Test 6: Proof size calculation
-    printf("Test 6: Proof size calculation... ");
-    size_t schnorr_size = proof_size(1, 1); // 1 commitment, 1 response
+    // Test 2: Schnorr proof size
+    printf("Test 2: Schnorr proof size... ");
+    size_t schnorr_size = csigma_proof_size(1, 1); // 1 commitment, 1 response
     if (schnorr_size != 64) {
-        printf("❌ Wrong Schnorr size: %zu (expected 64)\n", schnorr_size);
+        printf("Wrong Schnorr size: %zu (expected 64)\n", schnorr_size);
         return 1;
     }
+    printf("PASS\n");
 
-    size_t dleq_size = proof_size(2, 1); // 2 commitments, 1 response
+    // Test 3: DLEQ proof size
+    printf("Test 3: DLEQ proof size... ");
+    size_t dleq_size = csigma_proof_size(2, 1); // 2 commitments, 1 response
     if (dleq_size != 96) {
-        printf("❌ Wrong DLEQ size: %zu (expected 96)\n", dleq_size);
+        printf("Wrong DLEQ size: %zu (expected 96)\n", dleq_size);
         return 1;
     }
+    printf("PASS\n");
 
-    size_t pedersen_size = proof_size(1, 2); // 1 commitment, 2 responses
+    // Test 4: Pedersen proof size
+    printf("Test 4: Pedersen proof size... ");
+    size_t pedersen_size = csigma_proof_size(1, 2); // 1 commitment, 2 responses
     if (pedersen_size != 96) {
-        printf("❌ Wrong Pedersen size: %zu (expected 96)\n", pedersen_size);
+        printf("Wrong Pedersen size: %zu (expected 96)\n", pedersen_size);
         return 1;
     }
-    printf("✓\n");
+    printf("PASS\n");
 
-    printf("\n✓ All serialization tests passed\n");
+    // Test 5: Error handling - wrong length
+    printf("Test 5: Error handling (wrong length)... ");
+    uint8_t bad_buffer[10];
+    if (csigma_deserialize_proof(unpacked_commitment, 2, unpacked_response, 3, bad_buffer, 10) ==
+        0) {
+        printf("Should have rejected wrong length\n");
+        return 1;
+    }
+    printf("PASS\n");
+
+    // Test 6: Error handling - NULL input
+    printf("Test 6: Error handling (NULL input)... ");
+    if (csigma_serialize_proof(NULL, original_commitment, 1, original_response, 1) == 0) {
+        printf("Should have rejected NULL output\n");
+        return 1;
+    }
+    printf("PASS\n");
+
+    // Test 7: Round-trip for Schnorr-sized proof
+    printf("Test 7: Schnorr-sized proof round-trip... ");
+    uint8_t schnorr_commitment[CSIGMA_POINT_BYTES];
+    uint8_t schnorr_response[CSIGMA_SCALAR_BYTES];
+
+    crypto_core_ristretto255_scalar_random(temp_scalar);
+    crypto_scalarmult_ristretto255_base(schnorr_commitment, temp_scalar);
+    crypto_core_ristretto255_scalar_random(schnorr_response);
+
+    uint8_t schnorr_proof[CSIGMA_SCHNORR_PROOF_SIZE];
+    if (csigma_serialize_proof(schnorr_proof, schnorr_commitment, 1, schnorr_response, 1) != 0) {
+        printf("Serialization failed\n");
+        return 1;
+    }
+
+    uint8_t schnorr_commitment_out[CSIGMA_POINT_BYTES];
+    uint8_t schnorr_response_out[CSIGMA_SCALAR_BYTES];
+    if (csigma_deserialize_proof(schnorr_commitment_out, 1, schnorr_response_out, 1, schnorr_proof,
+                                 CSIGMA_SCHNORR_PROOF_SIZE) != 0) {
+        printf("Deserialization failed\n");
+        return 1;
+    }
+
+    if (sodium_memcmp(schnorr_commitment, schnorr_commitment_out, CSIGMA_POINT_BYTES) != 0 ||
+        sodium_memcmp(schnorr_response, schnorr_response_out, CSIGMA_SCALAR_BYTES) != 0) {
+        printf("Data mismatch\n");
+        return 1;
+    }
+    printf("PASS\n");
+
+    printf("\nAll serialization tests passed\n");
     return 0;
 }
